@@ -21,8 +21,8 @@
 
 
 // Credenciais do Wi-Fi
-#define ssid "Halo-2G"
-#define password "01563853"
+#define ssid "UFPI"
+#define password ""
 
 
 // Criação do servidor na porta 80
