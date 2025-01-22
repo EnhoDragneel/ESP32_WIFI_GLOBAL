@@ -1,0 +1,375 @@
+//BIBLIOTECA
+//#include "BluetoothSerial.h"
+//#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+//#error Bluetooth nao esta ativado! Por favor execute make menuconfig e ative-o
+//#endif
+#define BLYNK_TEMPLATE_ID "TMPL2OkosM6ua"
+#define BLYNK_TEMPLATE_NAME "Esp32"
+#define BLYNK_AUTH_TOKEN "yc1rQDkHXpgxHzn7azR4t8ruTTQHZpIR"
+#include <WiFi.h>
+#include <WebServer.h>
+#include <BlynkSimpleEsp32.h>
+
+
+//DEFINIÇÕES
+#define LED_BUILTIN 2  
+#define LED2 4  
+#define LEDpwm 5  
+#define BOTAO 13  
+#define Pot 33  
+#define total 10
+
+
+// Credenciais do Wi-Fi
+#define ssid "Halo-2G"
+#define password "01563853"
+
+
+// Criação do servidor na porta 80
+WebServer server(80);
+
+
+//BluetoothSerial SerialBT;
+
+
+// VARIÁVEIS GLOBAIS  
+int statusBotao = 0;  
+int statusBotao2;
+int armazena[total];  
+int ultimoStatusBotao = LOW;  
+unsigned long previousMillis = 0, previousMillis1 = 0;  
+int statusPotenciometro = 0;  
+bool debugMode = false;  
+bool menuMode = false;  
+bool cargaImprimir = false;  
+unsigned long ultimoMenuStatus = 0;  
+const long menuIntervalo = 5000;  
+int ledPWMValor = 0;  
+hw_timer_t *timerBlink = NULL;  
+int outputMode = 0; // Controle de saída: 0 - Serial, 1 - SerialBT, 2 - Ambos
+String ledState = "Desligado";
+
+
+void IRAM_ATTR timerBlinkOnBoard(){  
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));  
+    if (debugMode) {  
+        EnviarMenssagem(digitalRead(LED_BUILTIN) ? "LIGOU, LED Blinkando Timer" : "DESLIGOU, LED Blinkando Timer");  
+    }  
+}
+
+
+void EnviarMenssagem(String message) {
+    if (outputMode == 0 || outputMode == 2) {
+        Serial.println(message);
+    }
+}
+
+
+// INICIALIZAÇÃO  
+void setup() {  
+    Serial.begin(9600);  
+    delay(500);  
+    pinMode(LED_BUILTIN, OUTPUT);  
+    pinMode(LED2, OUTPUT);  
+    pinMode(LEDpwm, OUTPUT);  
+    pinMode(BOTAO, INPUT);  
+    attachInterrupt(digitalPinToInterrupt(BOTAO), Controle_Botao_Interrupcao, CHANGE);  
+    timerBlink = timerBegin(1000000);  // Apenas dois parâmetros  
+    timerAttachInterrupt(timerBlink, &timerBlinkOnBoard);  
+    timerAlarm(timerBlink, 1000000, true, 0);    
+    // -------------------- AGRADECIMENTOS ESPECIAIS AO PESSOAL DAQUI: https://github.com/adafruit/RadioHead/issues/79 ---------------------------  
+
+
+    //SerialBT.begin("ESP32_Enho_Dragneel"); //Bluetooth device name
+    //EnviarMenssagem("O dispositivo foi iniciado, agora você pode emparelha-lo via Bluetooth!");
+
+
+    // Conectar ao Wi-Fi
+    WiFi.softAP(ssid, password);
+    Serial.println("Ponto de acesso configurado.");
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(1000);
+      Serial.println("Conectando ao WiFi...");
+    }
+    Serial.println("WiFi conectado!");
+    Serial.print("Endereço IP: ");
+    Serial.println(WiFi.localIP());
+
+    // Configurações do servidor
+
+    server.begin();
+    Serial.println("Servidor iniciado");
+
+    Blynk.begin(BLYNK_AUTH_TOKEN, ssid, password);
+}  
+
+
+// LOOP  
+void loop() {  
+    Configuracao();  
+    Menu_Status();  
+    Imprimir();  
+    Controle_Botao_BLYNK();
+    Controle_Potenciometro(LEDpwm, 4);  
+    delay(42);  
+    Blynk.run();
+}
+
+// FUNÇÕES  
+void Menu_Status() {  
+    if (menuMode) {  
+        unsigned long currentMillis = millis();  
+        if (currentMillis - ultimoMenuStatus >= menuIntervalo) {  
+            ultimoMenuStatus = currentMillis;    
+            EnviarMenssagem("\n\n");  
+            EnviarMenssagem("=============== STATUS DOS EQUIPAMENTOS ===============\n");  
+            EnviarMenssagem("LED_BUILTIN: ");  
+            EnviarMenssagem(digitalRead(LED_BUILTIN) ? "ON" : "OFF");  
+            EnviarMenssagem("LED2: ");  
+            EnviarMenssagem(digitalRead(LED2) ? "ON" : "OFF");  
+            EnviarMenssagem("BOTAO: ");  
+            EnviarMenssagem(digitalRead(BOTAO) ? "ON" : "OFF");  
+            if (ledPWMValor > 0) {  
+                EnviarMenssagem("LED PWM: ON");  
+            } else {  
+                EnviarMenssagem("LED PWM: OFF");  
+            }  
+            EnviarMenssagem("POTENCIOMETRO: ");  
+            EnviarMenssagem(String(map(Media_Movel(analogRead(Pot)), 0, 4095, 0, 255)));  
+            EnviarMenssagem("\n=============== FIM DO STATUS DOS EQUIPAMENTOS ===============");  
+            EnviarMenssagem("\n\n\n\n\n");  
+        }  
+    }  
+}
+
+
+void Configuracao() {
+    // Bluetooth
+    //if (SerialBT.available()) {
+    //    String comando = SerialBT.readStringUntil('\n');
+    //    comando.trim();
+    //    ProcessarComando(comando);
+    //}
+
+
+    // Monitor Serial USB
+    if (Serial.available()) {
+        String comando = Serial.readStringUntil('\n');
+        comando.trim();
+        ProcessarComando(comando);
+    }
+}
+
+
+void ProcessarComando(String comando) {    
+        if (comando.equals("M")) {  
+            menuMode = !menuMode;  
+            EnviarMenssagem(menuMode ? "\n\n ===== MENU: ON =====" : "\n\n ===== MENU: OFF =====");  
+        } else if (comando.equals("D")) {  
+            debugMode = !debugMode;  
+            EnviarMenssagem(debugMode ? "\n\n ===== DEBUG: ON =====\n\n" : "\n\n ===== DEBUG: OFF =====\n\n");  
+        } else if (comando.equals("I")){  
+            cargaImprimir = !cargaImprimir;  
+            EnviarMenssagem(cargaImprimir ? "\n\n ===== CARGA: ON =====" : "\n\n ===== CARGA: OFF =====");  
+        } else if (comando.equals("SERIAL")) {
+            outputMode = 0;
+            EnviarMenssagem("\n\n ===== SAÍDA DEFINIDA PARA: Serial =====\n\n");
+        } else if (comando.equals("BT")) {
+            outputMode = 1;
+            EnviarMenssagem("\n\n ===== SAÍDA DEFINIDA PARA: SerialBT =====\n\n");
+        } else if (comando.equals("AMBOS")) {
+            outputMode = 2;
+            EnviarMenssagem("\n\n ===== SAÍDA DEFINIDA PARA: Ambos =====\n\n");
+        } else {  
+          Controle_MonitorSerial(LED2, comando);  
+        }
+    }  
+
+
+//CONFIGURAÇÕES WIFI GLOBAL
+//LED
+BLYNK_WRITE(V1) {  
+  int valor = param.asInt();  
+  if (debugMode) {  
+    if(valor == 1) {
+      EnviarMenssagem("BOTÃO ON");
+    } else if (valor == 0) {
+      EnviarMenssagem("BOTÃO OFF");
+    }
+  } 
+  statusBotao2 = valor;
+  digitalWrite(LED2, statusBotao2);
+  Blynk.virtualWrite(V4, valor);   
+}
+
+//VALOR PWM
+BLYNK_WRITE(V3) { 
+  int valor = param.asInt();  
+    Controle_MonitorSerial_AnalogicWrite(valor, LEDpwm);
+    Blynk.virtualWrite(V5, valor);
+}
+
+//MONITOR
+BLYNK_WRITE(V6) {  
+  String input = param.asStr();  // 
+  if (debugMode) {
+    EnviarMenssagem("COMANDO RECEBIDO: " + input);
+  }
+  Controle_MonitorSerial(LED2, input);
+  int valor = (input).toInt();
+    if (valor >= 0 && valor <= 255) {
+      Controle_MonitorSerial_AnalogicWrite(valor, LEDpwm);
+    }
+}
+
+//CARGA
+BLYNK_WRITE(V0) {
+  int valor = param.asInt();  
+  if (valor == 1) {
+      cargaImprimir = !cargaImprimir;
+    } else if (valor == 0) {
+      cargaImprimir = !cargaImprimir;
+    }
+  if (debugMode) {  
+    if(valor == 1) {
+      EnviarMenssagem("CARGA ON");
+    } else if (valor == 0) {
+      EnviarMenssagem("CARGA OFF");
+    }
+  }
+}
+
+//DEBUG
+BLYNK_WRITE(V2) {
+  int valor = param.asInt();  
+  if (valor == 1) {
+      debugMode = !debugMode;
+    } else if (valor == 0) {
+      debugMode = !debugMode; 
+    }
+  if (debugMode) {  
+    if(valor == 1) {
+      EnviarMenssagem("DEBUG ON");
+    } else if (valor == 0) {
+      EnviarMenssagem("DEBUG OFF");
+    }
+  }
+}
+
+//ACABOU WIFI GLOBAL
+
+void Imprimir() {  
+    if (cargaImprimir){  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+        EnviarMenssagem("texto gigante");  
+    }  
+}  
+
+
+unsigned Media_Movel(int leitura) {  
+    unsigned soma = 0;  
+    for (int i = total - 1; i >= 1; i--)  
+        armazena[i] = armazena[i - 1];  
+    armazena[0] = leitura;  
+    for (int i = 0; i < total; i++)  
+        soma += armazena[i];  
+    return (int)(soma / total);  
+}  
+
+
+void Controle_Potenciometro(int LED, int intervalo) {  
+    int leitura = Media_Movel(analogRead(Pot));  
+    int led = map(leitura, 0, 4095, 0, 255);  
+    if ((leitura != statusPotenciometro) && (abs(leitura - statusPotenciometro) > intervalo)) {  
+        statusPotenciometro = leitura;  
+        analogWrite(LED, led); 
+        Blynk.virtualWrite(V5, led); 
+        if (debugMode) {  
+            EnviarMenssagem("POTENCIÔMETRO: " + String(led));  
+        }  
+    }  
+}  
+
+
+void Controle_Botao_Interrupcao() {  
+    int statusBotaoleitura = digitalRead(BOTAO);  
+    digitalWrite(LED2, statusBotaoleitura);
+    if (debugMode) {  
+       EnviarMenssagem(statusBotaoleitura ? "BOTÃO ON" : "BOTÃO OFF");  
+    }  
+}  
+
+
+void Controle_Botao_BLYNK() { 
+    int statusBotaoleitura = digitalRead(BOTAO); 
+    if (statusBotaoleitura != statusBotao) { 
+    digitalWrite(LED2, statusBotaoleitura);
+    Blynk.virtualWrite(V4, statusBotaoleitura);
+    if (debugMode) {  
+       EnviarMenssagem(statusBotaoleitura ? "BOTÃO ON" : "BOTÃO OFF");  
+    }  
+    statusBotao = statusBotaoleitura;
+    }  
+}  
+
+
+void Controle_MonitorSerial_AnalogicWrite(int num, int LED) {  
+    if (debugMode) {  
+            EnviarMenssagem("POTENCIÔMETRO: " + String(num));  
+    }  
+    analogWrite(LED, num);  
+    Blynk.virtualWrite(V5, num);
+    ledPWMValor = num;  
+}  
+
+
+void Controle_MonitorSerial(int LED, String comando) {  
+    switch (comando.charAt(0)) {  
+        case 'O':  
+            if (comando.equals("ON")) {  
+                digitalWrite(LED, HIGH);
+                ledState = digitalRead(LED) ? "Ligado" : "Desligado";
+                Blynk.virtualWrite(V4, 1);
+                if (debugMode) {  
+                    EnviarMenssagem("Texto recebido: " + comando + ", LED2: " + ledState);  
+                }  
+            } else if (comando.equals("OFF")) {  
+                digitalWrite(LED, LOW);  
+                ledState = digitalRead(LED) ? "Ligado" : "Desligado";
+                Blynk.virtualWrite(V4, 0);
+                if (debugMode) {  
+                    EnviarMenssagem("Texto recebido: " + comando + ", LED2: " + ledState);  
+                }  
+            }  
+            break;  
+        default:  
+            int num = comando.toInt();  
+            Controle_MonitorSerial_AnalogicWrite(num, LEDpwm);  
+            break;  
+    }  
+}  
+
+
+void Blinkar_LED(int LED) {  
+    unsigned long currentMillis = millis();  
+    if (currentMillis - previousMillis >= 100) {  
+        previousMillis = currentMillis;  
+        digitalWrite(LED, !digitalRead(LED));  
+        if (debugMode) {  
+            EnviarMenssagem(digitalRead(LED) ? "LIGOU, LED Blinkando" : "DESLIGOU, LED Blinkando");  
+        }  
+    }  
+}
